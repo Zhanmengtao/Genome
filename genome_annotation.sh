@@ -1,3 +1,45 @@
+################################################ genome_feature_analysis #####################################################
+# Assembly status statistics
+mkdir genome_statistic
+cd genome_statistic
+genome_seq_clear.pl ../pilon/pilon_out/012m_pilon.fasta --seq_prefix A_012m_scafford_ > Armillaria_012m_genome.fasta
+cal_seq_length.pl Armillaria_012m_genome.fasta > seq_length.txt
+cd ../
+# genome_feature_analysis
+mkdir genome_feature_analysis
+cd genome_feature_analysis
+#  RepeatMasker 
+mkdir repeat_analysis
+cd repeat_analysis
+fasta_no_blank.pl ~/data/012m/genome_statistic/Armillaria_012m_genome.fasta > genome.fasta
+mkdir repeatMasker
+/opt/biosoft/RepeatMasker/RepeatMasker -pa 32 -e ncbi -species "Basidiomycota" -dir repeatMasker/ -gff genome.fasta
+# repeatModeler 
+mkdir repeatModeler
+cd repeatModeler
+/opt/biosoft/RepeatModeler-open-1.0.11/BuildDatabase -name Armillaria_012m -engine ncbi ../genome.fasta
+/opt/biosoft/RepeatModeler-open-1.0.11/RepeatModeler -engine ncbi -pa 32 -database Armillaria_012m
+/opt/biosoft/RepeatMasker/RepeatMasker -pa 32 -e ncbi -lib Armillaria_012m-families.fa -dir ./ -gff ../genome.fasta
+cd ../
+# merge
+merge_repeatMasker_out.pl repeatMasker/genome.fasta.out repeatModeler/genome.fasta.out > genome.repeat.stats
+# masked genome
+maskedByGff.pl genome.repeat.gff3 genome.fasta --mask_type softmask > 012m_genome.softmask.fasta
+cd ../
+# RNAmmer
+mkdir RNAmmer
+cd RNAmmer
+ln -s ~/data/012m/genome_statistic/Armillaria_012m_genome.fasta ./
+/opt/biosoft/rnammer-1.2/rnammer -S euk -multi -f rRNA.fasta -h rRNA.hmmreport -xml rRNA.ml -gff rRNA.gff2 Armillaria_012m_genome.fasta
+rRNAmmer_gff2gff3.pl rRNA.gff2 > rRNA.gff3
+cd ../
+# tRNA
+mkdir tRNAscan-SE
+cd tRNAscan-SE
+ln -s ~/data/012m/genome_statistic/Armillaria_012m_genome.fasta ./
+tRNAscan-SE -o 012m_tRNA.out -f 012m_tRNA.ss -m 012m_tRNA.stats Armillaria_012m_genome.fasta
+tRNAscanSE2GFF3.pl 012m_tRNA.out 012m_tRNA.ss > 012m_tRNA.gff3
+cd ../../
 ################################################### gene prediction ####################################################################
 mkdir RNA
 #################Storing RNA-seq data##################
@@ -225,3 +267,57 @@ bestGeneModels.pl genome.maker.gff3 > genome.bestGeneModels.gff3 2> geneModelsSt
 gff3ToGtf.pl genome.fasta genome.bestGeneModels.gff3 > genome.bestGeneModels.gtf
 eukaryotic_gene_model_statistics.pl genome.bestGeneModels.gtf genome.fasta bestGeneModels > bestGeneModels.gene_model_statistic.txt
 cd ../
+## Assessing genome assembly completeness with Benchmarking Universal Single-Copy Orthologs 
+mkdir BUSCO
+cd BUSCO
+############## genome ###############
+ln -s ~/data/012m/genome_feature_analysis/repeat_analysis/genome.fasta ./genome.fasta
+/opt/biosoft/BUSCO_V3.0.2b/scripts/run_BUSCO.py -i genome.fasta -c 32 -m genome -l /opt/biosoft/BUSCO_V3.0.2b/database/basidiomycota_odb9/ -f -sp A_012m -o genome
+############## annotation ############
+/opt/biosoft/BUSCO_V3.0.2b/scripts/run_BUSCO.py -i ../pasa_maker/out.pep.fasta -c 32 -m proteins -l /opt/biosoft/BUSCO_V3.0.2b/database/basidiomycota_odb9/ -o annotation
+cd ../
+#  Interpro annotation
+mkdir interpro
+cd interpro
+perl -p -e 's/\*$//' ~/data/012m/pasa_maker/out.pep.fasta > proteins.fasta
+interProScan5.pl proteins.fasta yanghaiying@ynni.edu.cn interpro5 30
+cd ../
+# nr_uniprot annotation (with nr(txid4751:fungi) and uniprot_sprot)
+mkdir nr
+cd nr
+cp ../interpro/proteins.fasta ./
+cd ~/blast_database/fungi
+gunzip *faa.gz
+cd -
+cat ~/blast_database/fungi/*faa > fungi_uniprot.fa
+wget ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
+gunzip uniprot_sprot.fasta.gz
+cat uniprot_sprot.fasta >> fungi_uniprot.fa
+makeblastdb -in fungi_uniprot.fa -dbtype prot -title fungi_uniprot -parse_seqids -out fungi_uniprot -logfile fungi_uniprot.log
+perl -p -i -e 's/-outfmt/-max_target_seqs 20 -outfmt/' ~/bin/blast.pl
+blast.pl blastp fungi_uniprot proteins.fasta 1e-5 32 uniprot_sprot 5
+
+# eggNOG-mapper annotation with fungi
+mkdir eggNOG-mapper
+cd eggNOG-mapper
+cp ../interpro/proteins.fasta ./
+# Annotate Protein Sequences (Mapping mode :DIAMOND  Taxonomic Scope : fungi  Orthologs: Restrict to one to one Gene Ontology evidence: use experimental Term)
+wget http://eggnogdb.embl.de/MM_VGl077/proteins.fasta.emapper.annotations
+mv proteins.fasta.emapper.annotations emapper.annotations_with_quality
+# https://github.com/jameslz/ann-utils download emapper-ann emapper-eggnog
+emapper-ann -d KEGG emapper.annotations_with_quality > emapper.ko
+emapper-ann -d GO emapper.annotations_with_quality > emapper.GO
+emapper-eggnog -c KOG emapper.annotations_with_quality > emapper.KOG
+#KAAS annotation
+# http://www.genome.jp/kaas-bin/kaas_main (submit proteins.fasta )
+mkdir KAAs
+cd KAAs
+#wget https://www.genome.jp/tools/kaas/files/dl/1537242239/query.ko(with Ascomycetes[but without Saccharomycetes and Schizosaccharomycetes])
+wget https://www.genome.jp/tools/kaas/files/dl/1537251157/query.ko
+cp ../eggNOG-mapper/emapper.ko ./
+merge_eggNOG_to_ko.pl query.ko emapper.ko > eggNOG_KAAS_merge.ko
+#	Total	KAAS	eggNOG	Common
+#KO:	5137	3906	4533	3302
+#Gene:	4826	3906	4273	3353
+
+#blast2go
