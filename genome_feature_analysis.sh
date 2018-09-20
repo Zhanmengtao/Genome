@@ -1,4 +1,4 @@
-#################################################### genome_feature_analysis ########################################################
+#################################################### genome_feature_analysis #######################################################
 # Assembly status statistics
 mkdir genome_statistic
 cd genome_statistic
